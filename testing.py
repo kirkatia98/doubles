@@ -38,20 +38,48 @@ def compute_trace(filename):
         print("{},{},{}".format(cnt, tot, tot / cnt))
 
 
-def generate_trace(filename, callback, num):
+def generate_trace(filename, func, num):
     with open(filename, "w") as f:
-        f.write("\n")
-
         for n in range(num):
-            f.write("{}\n".format(str(callback(n))))
+            f.write("\n")
+            f.write("{}".format(str(func(n))))
 
 
-def random(n):
-    return rand.random()
+# Switch statement of callback functions that take an integer argument.
+# Each function is configured with the kwargs specific to it
+def callback(*args):
+    f = args[0]
+
+    def default(n):
+        return rand.random()
+
+    def uniform(n):
+        a = args[1]
+        b = args[2]
+        return rand.uniform(a, b)
+
+    def gauss(n):
+        mu = args[1]
+        sigma = args[2]
+        return rand.gauss(mu, sigma)
+
+    def triangular(n):
+        low = args[1]
+        high = args[2]
+        mode = args[3]
+        return rand.triangular(low, high, mode)
+
+    funcs = {
+        "uni": uniform,
+        "tri": triangular,
+        "gauss": gauss
+    }
+
+    return funcs.get(f, default)
 
 
 if __name__ == '__main__':
     dec.getcontext().prec = 2000
-    compute_trace("traces/test.csv")
 
-    generate_trace("traces/test.csv", random, 15)
+    generate_trace("traces/gauss.csv", callback("gauss", 5, 10), 100)
+    compute_trace("traces/gauss.csv")

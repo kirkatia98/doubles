@@ -3,6 +3,7 @@ import decimal as dec
 import struct
 import sys
 import random as rand
+import math
 
 
 def bin2float(b):
@@ -16,7 +17,16 @@ def float2bin(f):
     return ''.join([b[:1], " 0x", b[1:12], " 0x", b[12:]])
 
 
+def generate_trace(filename, func, num):
+    with open(filename, "w") as f:
+        for n in range(num):
+            f.write("\n")
+            val = func(n)
+            f.write("{0:.60f}".format(val))
+
+
 def compute_trace(filename):
+    dec.getcontext().prec = 2000
     with open(filename, "r") as f:
         f.readline()
         tot = dec.Decimal(0)
@@ -35,18 +45,20 @@ def compute_trace(filename):
             cnt += mult
             tot += val * mult
 
-        print("{},{},{}".format(cnt, tot, tot / cnt))
+        print("n: {}".format(cnt))
+        print("sum: {}".format(tot))
+        print("avg: {}".format(tot/cnt))
+        print()
 
 
-def generate_trace(filename, func, num):
-    with open(filename, "w") as f:
-        for n in range(num):
-            f.write("\n")
-            f.write("{}".format(str(func(n))))
+def output_trace(filename):
+    with open(filename, "r") as f:
+        for ln in f:
+            print(ln.strip())
 
 
 # Switch statement of callback functions that take an integer argument.
-# Each function is configured with the kwargs specific to it
+# Each function is configured with the args specific to it
 def callback(*args):
     f = args[0]
 
@@ -69,17 +81,27 @@ def callback(*args):
         mode = args[3]
         return rand.triangular(low, high, mode)
 
+    def sine(x):
+        freq = args[1]
+        phase = args[2]
+        amp = args[3]
+        shift = args[4]
+        return amp * math.sin(x * freq + phase) + shift
+
     funcs = {
         "uni": uniform,
         "tri": triangular,
-        "gauss": gauss
+        "gauss": gauss,
+        "sine": sine
     }
 
     return funcs.get(f, default)
 
 
 if __name__ == '__main__':
-    dec.getcontext().prec = 2000
 
-    generate_trace("traces/gauss.csv", callback("gauss", 5, 10), 100)
-    compute_trace("traces/gauss.csv")
+    file = "traces/gauss-giant"
+    func = callback("gauss", 300, 500)
+
+    generate_trace(file, func, 1000)
+    compute_trace(file)

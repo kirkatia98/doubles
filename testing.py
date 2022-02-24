@@ -100,8 +100,8 @@ def callback(*args):
 
 if __name__ == '__main__':
 
-    file = "traces/gauss-giant"
-    func = callback("gauss", 300, 500)
+    file = "traces/tri.csv"
+    func = callback("tri", -200, 50, 5000)
 
-    generate_trace(file, func, 1000)
+    generate_trace(file, func, 200)
     compute_trace(file)

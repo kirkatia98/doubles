@@ -1,12 +1,13 @@
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define MAXLINE 256
 #define lf "%lf"
-#define lf52 "%.52lf"
+#define lf52 "%58.52lf"
 
 union Data32 {
     unsigned u;
@@ -19,6 +20,8 @@ union Data64 {
     double f;
     char bytes[8];
 };
+
+typedef double (*avg_func)(const double*, int);
 
 char* toBinary(unsigned n, int len)
 {
@@ -55,7 +58,21 @@ double avg_naive(const double* data, int n){
     return sum / (double ) n;
 }
 
+// Terrible!
+double avg_counter(const double* data, int n){
+    double avg = 0.0;
+    double sum = 0.0;
+    for (int i = 0; i < n; i++){
+        sum += data[i];
+        if (sum > (double) n){
+            avg += sum / (double) n;
+            sum = fmod(sum, n);
+        }
+    }
+    avg += sum / (double) n;
 
+    return avg;
+}
 
 int main(int argc, char *argv[]) {
     int n;
@@ -90,25 +107,35 @@ int main(int argc, char *argv[]) {
     printf("avg: " lf52 "\n", avg);
     printf("\n");
 
+    if(n == 0){
+        return 0;
+    }
+
     data = malloc(n * sizeof(double));
 
     for(int i = 0; i < n; i++){
         fscanf_s(fp, lf, &val);
-        printf(lf52 ", %la\n", val, val);
         data[i] = val;
     }
     fclose(fp);
 
     double avg1 = avg_naive(data, n);
+    double avg2 = avg_counter(data, n);
 
     qsort(data, n, sizeof(double),cmpfunc);
 
+    for(int i = 0; i < n; i++){
+        printf(lf52 "\n", data[i]);
+    }
 
-    double avg2 = avg_naive(data, n);
+    double avg3 = avg_naive(data, n);
+    double avg4 = avg_counter(data, n);
 
     printf("\n");
-    printf("Naive: " lf52 "," lf52 "\n", avg1, avg - avg1 );\
-    printf("Sorted: " lf52 "," lf52 "\n", avg2, avg - avg2 );
+    printf("N: " lf52 "," lf52 "\n", avg1, avg - avg1 );
+    printf("C: " lf52 "," lf52 "\n", avg2, avg - avg2 );
+    printf("S: " lf52 "," lf52 "\n", avg3, avg - avg3 );
+    printf("SC:" lf52 "," lf52 "\n", avg4, avg - avg4 );
     printf("\n");
 
     return(0);

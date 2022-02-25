@@ -88,11 +88,19 @@ def callback(*args):
         shift = args[4]
         return amp * math.sin(x * freq + phase) + shift
 
+    def tan(x):
+        freq = args[1]
+        phase = args[2]
+        amp = args[3]
+        shift = args[4]
+        return amp * math.tan(x * freq + phase) + shift
+
     funcs = {
         "uni": uniform,
         "tri": triangular,
         "gauss": gauss,
-        "sine": sine
+        "sine": sine,
+        "tan": tan
     }
 
     return funcs.get(f, default)
@@ -100,8 +108,8 @@ def callback(*args):
 
 if __name__ == '__main__':
 
-    file = "traces/tri.csv"
-    func = callback("tri", -200, 50, 5000)
+    file = "traces/uni-small.csv"
+    func = callback("uni", 10, 100)
 
-    generate_trace(file, func, 200)
+    generate_trace(file, func, 100000)
     compute_trace(file)

@@ -17,6 +17,9 @@
 #define COLUMN_NAMES "Filename                           Length            Avg(True)            Avg(Comp)           Error\n"
 #define COLUMN_FMT_STR "%-30s %10d %20.10lg %20.10lg %15.5lg\n"
 
+#define EXP 0
+#define FRAC 0
+
 union Data32 {
     unsigned u;
     float f;

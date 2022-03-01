@@ -108,8 +108,8 @@ def callback(*args):
 
 if __name__ == '__main__':
 
-    file = "traces/uni-small.csv"
-    func = callback("uni", 10, 100)
+    file = "traces/overflow.csv"
+    func = callback("uni", math.pow(10, 250), math.pow(10,305))
 
-    generate_trace(file, func, 100000)
+    generate_trace(file, func, 10000)
     compute_trace(file)

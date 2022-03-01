@@ -1,13 +1,21 @@
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <windows.h>
+#include <stdint.h>
 
 #define MAXLINE 256
 #define lf "%lf"
+#define lg52 "%10.30lg"
 #define lf52 "%58.52lf"
+
+#define COLUMN_NAMES "Filename            Length            Avg(True)            Avg(Comp)           Error\n"
+#define COLUMN_FMT_STR "%-15s %10d %20.10lg %20.10lg %15.5lg\n"
 
 union Data32 {
     unsigned u;
@@ -22,6 +30,7 @@ union Data64 {
 };
 
 typedef double (*avg_func)(const double*, int);
+typedef int (*cmp_func)(const void * ap, const void * bp);
 
 char* toBinary(unsigned n, int len)
 {
@@ -29,19 +38,43 @@ char* toBinary(unsigned n, int len)
     int k = 0;
     for (unsigned i = (1 << (len - 1)); i > 0; i = i / 2) {
         binary[k++] = (n & i) ? '1' : '0';
-        if (k == 1 || k == 10) {
-            binary[k++] = ' ';
-        }
     }
     binary[k] = '\0';
     return binary;
 }
+#ifdef _WIN32
+    struct timezone {
+        int tz_minuteswest;
+        int tz_dsttime;
+    };
+    int gettimeofday(struct timeval * tp, struct timezone * tzp)
+    {
+        // Note: some broken versions only have 8 trailing zero's, the correct epoch has 9 trailing zero's
+        // This magic number is the number of 100 nanosecond intervals since January 1, 1601 (UTC)
+        // until 00:00:00 January 1, 1970
+        static const uint64_t EPOCH = ((uint64_t) 116444736000000000ULL);
 
-void print32(union Data32* data) {
-    printf("uint: %u\nfloat: %e\nbits: %s\n\n", data->u, data->f, toBinary(data->u, 32));
+        SYSTEMTIME  system_time;
+        FILETIME    file_time;
+        uint64_t    time;
+
+        GetSystemTime( &system_time );
+        SystemTimeToFileTime( &system_time, &file_time );
+        time =  ((uint64_t)file_time.dwLowDateTime )      ;
+        time += ((uint64_t)file_time.dwHighDateTime) << 32;
+
+        tp->tv_sec  = (long) ((time - EPOCH) / 10000000L);
+        tp->tv_usec = (long) (system_time.wMilliseconds * 1000);
+        return 0;
+    }
+#endif
+
+double time_diff(struct timeval *start, struct timeval *end)
+{
+    return (end->tv_sec - start->tv_sec) + 1e-6*(end->tv_usec - start->tv_usec);
 }
 
-int cmpfunc (const void * ap, const void * bp) {
+int cmp (const void * ap, const void * bp) {
     double a = *(double *)ap;
     double b = *(double *)bp;
     if (b == a) {
@@ -49,6 +82,11 @@ int cmpfunc (const void * ap, const void * bp) {
     }
     return (a > b ? 1 : -1);
 }
+
+int cmp_inv (const void * ap, const void * bp) {
+    return cmp(ap, bp) * -1;
+}
+
 
 double avg_naive(const double* data, int n){
     double sum = 0.0;
@@ -58,85 +96,127 @@ double avg_naive(const double* data, int n){
     return sum / (double ) n;
 }
 
-// Terrible!
-double avg_counter(const double* data, int n){
+// Same as naive solution but now is now overflow proof.
+double avg_overflow(const double* data, int n){
     double avg = 0.0;
     double sum = 0.0;
+    double nd = (double) n;
+
+    double val, rem, max, min;
     for (int i = 0; i < n; i++){
-        sum += data[i];
-        if (sum > (double) n){
-            avg += sum / (double) n;
-            sum = fmod(sum, n);
+        val = data[i];
+
+        max = sum > val ? sum : val;
+        min = sum < val ? sum : val;
+
+        if (min + max == (double) INFINITY) {
+            rem = fmod(max, nd);
+            avg += max / nd;
+            if (rem + min == (double) INFINITY) {
+                rem += fmod(min, nd);
+                avg += min / nd;
+                sum = rem;
+                continue;
+            }
+            sum = min + rem;
+            continue;
         }
+        sum = min + max;
     }
-    avg += sum / (double) n;
+    avg += sum / nd;
 
     return avg;
 }
 
+
 int main(int argc, char *argv[]) {
-    int n;
-    double sum, avg, val;
+    int n, num_files = 0;
+    double sum, val, avg, avg_comp, err, tot_err = 0.0;
     double * data;
 
-    FILE * fp;
-    char* filename;
+    FILE *fp;
+    char *filename, *sDir;
+    char sPath[2048], errbuff[256];
 
-    errno_t err;
-    char errbuff[256];
+    WIN32_FIND_DATA fdFile;
+    HANDLE hFind = NULL;
+    errno_t file_err;
+
+    avg_func avgFunc = avg_overflow;
+    cmp_func cmpFunc = NULL;
+
+    struct timeval start, end;
 
     if (argc < 2) {
-        printf("Please provide a filename.");
+        printf("Please provide directory");
         return 0;
     }
 
-    filename = argv[1];
-    if((err = fopen_s(&fp, filename, "r")) != 0){
-        strerror_s(errbuff,255 + 1,err);
-        fprintf(stderr, "cannot open file '%s': %s\n", filename, errbuff);
+
+    // Search for files in passed in directory. Find . and .. files and ignore them.
+    sDir = argv[1];
+    sprintf(sPath, "%s\\*.*", sDir);
+    if((hFind = FindFirstFile(sPath, &fdFile)) == INVALID_HANDLE_VALUE) {
+        printf("Directory path not found: %s\n", sDir);
         return 0;
     }
+    FindNextFile(hFind, &fdFile);
 
-    fscanf_s(fp, "n: %d\n", &n);
-    fscanf_s(fp, "sum: " lf "\n", &sum);
-    fscanf_s(fp, "avg: " lf "\n", &avg);
-    fscanf_s(fp, "\n");
+    // For rest of the files, calculate avg with the callback function and calculate error.
+    printf(COLUMN_NAMES);
 
-    printf("n: %d\n", n);
-    printf("sum: " lf52 "\n", sum);
-    printf("avg: " lf52 "\n", avg);
-    printf("\n");
+    gettimeofday(&start, NULL);
+    while(FindNextFile(hFind, &fdFile))
+    {
+        sprintf(sPath, "%s\\%s", sDir, fdFile.cFileName);
+        filename = fdFile.cFileName;
 
-    if(n == 0){
-        return 0;
+        if((file_err = fopen_s(&fp, sPath, "r")) != 0){
+            strerror_s(errbuff,255 + 1, file_err);
+            fprintf(stderr, "cannot open file '%s': %s\n", filename, errbuff);
+            return 0;
+        }
+
+        fscanf_s(fp, "n: %d\n", &n);
+        fscanf_s(fp, "sum: " lf "\n", &sum);
+        fscanf_s(fp, "avg: " lf "\n", &avg);
+        fscanf_s(fp, "\n");
+
+        if(n == 0){
+            return 0;
+        }
+
+        data = malloc(n * sizeof(double));
+
+        for(int i = 0; i < n; i++){
+            fscanf_s(fp, lf, &val);
+            data[i] = val;
+        }
+
+
+        if (cmpFunc){
+            qsort(data, n, sizeof(double), cmpFunc);
+        }
+        avg_comp = avgFunc(data, n);
+
+        err = (avg - avg_comp)/avg;
+        tot_err += fabs(err);
+        num_files++;
+
+        printf(COLUMN_FMT_STR, filename, n, avg, avg_comp, err);
+
+        // Cleanup.
+        fclose(fp);
+        free(data);
     }
-
-    data = malloc(n * sizeof(double));
-
-    for(int i = 0; i < n; i++){
-        fscanf_s(fp, lf, &val);
-        data[i] = val;
-    }
-    fclose(fp);
-
-    double avg1 = avg_naive(data, n);
-    double avg2 = avg_counter(data, n);
-
-    qsort(data, n, sizeof(double),cmpfunc);
-
-    for(int i = 0; i < n; i++){
-        printf(lf52 "\n", data[i]);
-    }
-
-    double avg3 = avg_naive(data, n);
-    double avg4 = avg_counter(data, n);
+    gettimeofday(&end, NULL);
 
     printf("\n");
-    printf("N: " lf52 "," lf52 "\n", avg1, avg - avg1 );
-    printf("C: " lf52 "," lf52 "\n", avg2, avg - avg2 );
-    printf("S: " lf52 "," lf52 "\n", avg3, avg - avg3 );
-    printf("SC:" lf52 "," lf52 "\n", avg4, avg - avg4 );
-    printf("\n");
+    printf("Runtime: %.10lf seconds\n", time_diff(&start, &end));
+    printf("Total error: %.10lg\n", tot_err/num_files );
+
+    // Cleanup.
+    FindClose(hFind);
 
     return(0);
 }

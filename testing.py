@@ -45,9 +45,9 @@ def compute_trace(filename):
             cnt += mult
             tot += val * mult
 
+
         print("n: {}".format(cnt))
-        print("sum: {}".format(tot))
-        print("avg: {}".format(tot/cnt))
+        print("avg: {0:.60f}".format(tot/cnt))
         print()
 
 
@@ -108,8 +108,10 @@ def callback(*args):
 
 if __name__ == '__main__':
 
-    file = "traces/overflow.csv"
-    func = callback("uni", math.pow(10, 250), math.pow(10,305))
+    name = "tan-100k-small"
+    num = 1000
+    func = callback("tan", 0.001, 0, 100, 0.0)
 
-    generate_trace(file, func, 10000)
+    file = "traces/" + name + ".csv"
+    generate_trace(file, func, num)
     compute_trace(file)

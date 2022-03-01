@@ -14,8 +14,8 @@
 #define lg52 "%10.30lg"
 #define lf52 "%58.52lf"
 
-#define COLUMN_NAMES "Filename            Length            Avg(True)            Avg(Comp)           Error\n"
-#define COLUMN_FMT_STR "%-15s %10d %20.10lg %20.10lg %15.5lg\n"
+#define COLUMN_NAMES "Filename                           Length            Avg(True)            Avg(Comp)           Error\n"
+#define COLUMN_FMT_STR "%-30s %10d %20.10lg %20.10lg %15.5lg\n"
 
 union Data32 {
     unsigned u;
@@ -74,6 +74,7 @@ double time_diff(struct timeval *start, struct timeval *end)
     return (end->tv_sec - start->tv_sec) + 1e-6*(end->tv_usec - start->tv_usec);
 }
 
+// sorts in ascending order
 int cmp (const void * ap, const void * bp) {
     double a = *(double *)ap;
     double b = *(double *)bp;
@@ -83,10 +84,19 @@ int cmp (const void * ap, const void * bp) {
     return (a > b ? 1 : -1);
 }
 
+// descending order
 int cmp_inv (const void * ap, const void * bp) {
     return cmp(ap, bp) * -1;
 }
 
+int cmp_abs (const void * ap, const void * bp) {
+    double a = *(double *)ap;
+    double b = *(double *)bp;
+    if (b == a) {
+        return 0;
+    }
+    return (a*a > b*b ? 1 : -1);
+}
 
 double avg_naive(const double* data, int n){
     double sum = 0.0;
@@ -178,7 +188,6 @@ int main(int argc, char *argv[]) {
         }
 
         fscanf_s(fp, "n: %d\n", &n);
-        fscanf_s(fp, "sum: " lf "\n", &sum);
         fscanf_s(fp, "avg: " lf "\n", &avg);
         fscanf_s(fp, "\n");
 
@@ -213,12 +222,10 @@ int main(int argc, char *argv[]) {
 
     printf("\n");
     printf("Runtime: %.10lf seconds\n", time_diff(&start, &end));
-    printf("Total error: %.10lg\n", tot_err/num_files );
+    printf("Average error: %.10lg\n", tot_err/num_files );
 
     // Cleanup.
     FindClose(hFind);
 
     return(0);
 }
-
-

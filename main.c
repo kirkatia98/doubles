@@ -21,12 +21,12 @@
 #define COLUMN_FMT_STR "%-30s %10d %20.10lg %20.10lg %15.5lg\n"
 
 // Constants for extracting floating point fields from a double
-#define SIGN 1ll << 63
-#define EXP 0x7FFll << 52
+#define SIGN (1ll << 63)
+#define EXP (0x7FFll << 52)
 #define FRAC ~(0xFFFll << 52)
 
 // Implied leading 1 for adding to normalized fractions.
-#define ONE 1ll << 52
+#define ONE (1ll << 52)
 
 // The shift and index constants for breaking up a faction field into sums
 #define SHIFT 0x3ll
@@ -36,7 +36,7 @@
 // fractional fields. The index represents the exponent value. There are 16 + 1
 // buffer cells to hold overflow values. The avgs array will contain the sums
 // array elements divided by n.
-#define NUM_SIZES 512 + 16
+#define NUM_SIZES (512 + 16)
 
 #define INT52_MAX ((1ll << 52) - 1)
 #define INT52_MIN -(1ll << 52)
@@ -73,8 +73,6 @@ void print64(union Data64* data) {
         int tz_minuteswest;
         int tz_dsttime;
     };
-
-void compute_sums(const double *data, int64_t *sums, int n);
 
 int gettimeofday(struct timeval * tp, struct timezone * tzp)
     {
@@ -131,7 +129,7 @@ int cmp_abs (const void *ap, const void *bp) {
 
 
 
-// Simply adds the doubles and then devides the sum by n.
+// Simply adds the doubles and then divides the sum by n.
 double avg_naive(const double *data, int n){
     double sum = 0.0;
     for (int i = 0; i < n; i++){
@@ -195,6 +193,35 @@ void recursive_add(int64_t *cells, int64_t ind, int64_t x) {
 	cells[ind] += x;
 }
 
+// Starting from the most significant cells, shift down cells by one unless
+// doing so would cause and overflow. Returns true if cells were reduced to
+// smallest cell.
+bool shift_cells(int64_t *cells) {
+	bool zero = true;
+	int64_t x, a;
+
+	for (int i = NUM_SIZES - 1; i > 0; i--){
+		if(cells[i] == 0){
+			continue;
+		}
+
+		a = cells[i-1];
+		x = cells[i] << 4;
+
+		if (!((x > 0) && (a > INT52_MAX - x))
+		&&  !((x < 0) && (a < INT52_MIN - x))) {
+			cells[i-1] += cells[i] << 4;
+			cells[i] = 0;
+		}
+
+		// check that all but the zeroth element are non zero on each pass.
+		if (zero && cells[i] != 0){
+			zero = false;
+		}
+	}
+	return zero;
+}
+
 // Split all numbers across several split sums.
 void compute_sums(const double *data, int64_t *sums, int n) {
 	int64_t exp, shift, ind, frac;
@@ -238,11 +265,13 @@ void compute_sums(const double *data, int64_t *sums, int n) {
 
 // Divide all sums to get avgs, condense all avg into a single average.
 double compute_avg(int64_t *sums, int64_t *avgs, int n){
-    int64_t  remainder, x, a;
+    int64_t  remainder;
 	union Data64 val;
 
 	bool sign;
 	double avg_total;
+
+	int64_t exp, shift, ind;
 
     // boolean that indicates all elements in sum are zeros
     while(true){
@@ -252,51 +281,53 @@ double compute_avg(int64_t *sums, int64_t *avgs, int n){
         }
         // shift any non-zero sums down into next bucket,
         //if that would not cause an overflow. Else leave sum for next pass.
-	    bool zero = true;
-        for (int i = NUM_SIZES - 1; i > 0; i--){
-        	if(sums[i] == 0){
-		        continue;
-        	}
+	    bool all_zero = shift_cells(sums);
 
-	        a = sums[i-1];
-	        x = sums[i] << 4;
-
-        	if (!(sums[i] & (0xFll << 60))
-        	&&	!((x > 0) && (a > INT52_MAX - x))
-	        &&  !((x < 0) && (a < INT52_MIN - x))) {
-		        sums[i-1] += sums[i] << 4;
-		        sums[i] = 0;
-	        }
-
-            // check that all but the zeroth element are non zero on each pass.
-            if (zero && sums[i] != 0){
-                zero = false;
-            }
-        }
-        if(zero){
+	    if(all_zero){
 	        recursive_add(avgs, 0, sums[0]/n);
             remainder = sums[0] % n;
             break;
         }
     }
+    // Make sure all cells are shifted together as much as possible.
+    shift_cells(avgs);
 
     // Handle remainder and the denormalized size class separately.
     sign = remainder & SIGN;
 	val.i = llabs(remainder);
     avg_total = val.f/n * (sign ? -1 : 1);
 
-	sign = avgs[0] & SIGN;
+    sign = avgs[0] & SIGN;
 	val.i = llabs(avgs[0]);
 	avg_total += val.f * (sign ? -1 : 1);
 
-	// For normalized numbers, the leading one must be created. Shift the number
-	// and adjust the exponent until
-	for (int i = 1; i < NUM_SIZES; i++){
 
+	// For normalized numbers, the leading one must be created. Shift the number
+	// and adjust the exponent until the 53rd bit is set.
+	for (int i = 1; i < NUM_SIZES; i++){
+		if(avgs[i] == 0){
+			continue;
+		}
+		sign = avgs[i] & SIGN;
+		val.i = llabs(avgs[i]);
+
+		ind = i << 2;
+		shift = 0;
+		while (!(val.i & ONE)){
+			val.i <<= 1;
+			shift++;
+		}
+		// Zero the exponent field
+		val.i &= ~(EXP);
+		exp = (ind - shift) << 52;
+		val.i += exp;
+
+		avg_total += val.f * (sign ? -1 : 1);
 	}
 
     return avg_total;
 }
+
 
 double avg_bits(const double *data, int n){
 	int64_t  sums[NUM_SIZES], avgs[NUM_SIZES];
@@ -322,10 +353,10 @@ void test() {
 	print64(&a);
 	print64(&b);
 	print64(&c);
-
 }
 
 int main(int argc, char *argv[]) {
+
     int n, num_files = 0;
     double sum, val, avg, avg_comp, err, tot_err = 0.0;
     double * data;
@@ -349,7 +380,7 @@ int main(int argc, char *argv[]) {
     }
 
     sDir = argv[1];
-    sprintf(sPath, "%s\\overflow.csv", sDir);
+    sprintf(sPath, "%s\\*.csv", sDir);
     if((hFind = FindFirstFile(sPath, &fdFile)) == INVALID_HANDLE_VALUE) {
         printf("Directory path not found: %s\n", sPath);
         return 0;
@@ -367,7 +398,7 @@ int main(int argc, char *argv[]) {
         if((file_err = fopen_s(&fp, sPath, "r")) != 0){
             strerror_s(errbuff,255 + 1, file_err);
             fprintf(stderr, "cannot open file '%s': %s\n", filename, errbuff);
-            return 0;
+            //return 0;
         }
 
         fscanf_s(fp, "n: %d\n", &n);
@@ -375,7 +406,7 @@ int main(int argc, char *argv[]) {
         fscanf_s(fp, "\n");
 
         if(n == 0){
-            return 0;
+            //return 0;
         }
 
         data = malloc(n * sizeof(double));

@@ -328,7 +328,8 @@ double compute_avg(int64_t *sums, int64_t *avgs, int n){
     return avg_total;
 }
 
-
+// By keeping track of multiple sums at different exponent levels, there is less
+// compute error, if not completely eliminated.
 double avg_bits(const double *data, int n){
 	int64_t  sums[NUM_SIZES], avgs[NUM_SIZES];
 

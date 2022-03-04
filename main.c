@@ -33,15 +33,18 @@
 #define IND 0x7FCll
 
 // The sums array will contain an integer value representing accumulated
-// fractional fields. The index represents the exponent value. There are 32
-// buffer cells to hold overflow values.
+// fractional fields. The index represents the exponent value. There are 16 + 1
+// buffer cells to hold overflow values. The avgs array will contain the sums
+// array elements divided by n.
+#define NUM_SIZES 512 + 16
 
-#define SUMS_LEN 544
-
+#define INT52_MAX ((1ll << 52) - 1)
+#define INT52_MIN -(1ll << 52)
 
 // Bit Printing Utility Functions.
 union Data64 {
     uint64_t u;
+    int64_t i;
     double f;
     char bytes[8];
 };
@@ -61,7 +64,7 @@ char* toBinary(uint64_t n, int len)
 }
 
 void print64(union Data64* data) {
-    printf("uint: %llu\nfloat: %lg\nbits: %s\n\n", data->u, data->f, toBinary(data->u, 64));
+    printf("int: %lld\nuint: %llu\nfloat: %lg\nbits: %s\n\n", data->i, data->u, data->f, toBinary(data->u, 64));
 }
 
 // Timing Code.
@@ -70,7 +73,10 @@ void print64(union Data64* data) {
         int tz_minuteswest;
         int tz_dsttime;
     };
-    int gettimeofday(struct timeval * tp, struct timezone * tzp)
+
+void compute_sums(const double *data, int64_t *sums, int n);
+
+int gettimeofday(struct timeval * tp, struct timezone * tzp)
     {
         // Note: some broken versions only have 8 trailing zero's, the correct epoch has 9 trailing zero's
         // This magic number is the number of 100 nanosecond intervals since January 1, 1601 (UTC)
@@ -167,118 +173,157 @@ double avg_overflow(const double *data, int n){
 }
 
 
-void add2sums(int8_t *sums, int64_t ind, int8_t x) {
-    if (ind >= SUMS_LEN) {
+// Add x to the appropriate index (in either sums or avgs). In the case that
+// this would overflow what would be the fractional field, add to the next class
+// up.
+void recursive_add(int64_t *cells, int64_t ind, int64_t x) {
+    if (ind >= NUM_SIZES) {
         raise(SIGINT);
     }
-    int8_t a = sums[ind];
+    int64_t a = cells[ind];
 
     // If adding x to the current index would overflow,
     // recurse and add to the next size up. Same the remainder for current size.
 
     // `a + x` would overflow or underflow
-    if (((x > 0) && (a > INT8_MAX - x))
-    || ((x < 0) && (a < INT8_MIN - x))) {
-	    add2sums(sums, ind + 1, sums[ind] / 16);
-        sums[ind] = sums[ind] % 16;
+    if (((x > 0) && (a > INT52_MAX - x))
+    ||  ((x < 0) && (a < INT52_MIN - x))) {
+	    recursive_add(cells, ind + 1, cells[ind] / 16);
+	    cells[ind] = cells[ind] % 16;
     }
 
-    sums[ind] += x;
+	cells[ind] += x;
 }
 
-double compute_avg(int8_t sums[SUMS_LEN], int n){
-    int64_t  remainder, avgs[SUMS_LEN];
-    for (int i = 0; i < SUMS_LEN; i++){
-        avgs[i] = 0;
-    }
+// Split all numbers across several split sums.
+void compute_sums(const double *data, int64_t *sums, int n) {
+	int64_t exp, shift, ind, frac;
+	bool sign;
 
+	union Data64 val;
+
+	for (int i = 0; i < n; i++){
+		val.f = data[i];
+
+		// Extract fraction, exponent and sign data from the bit vector.
+		sign = (val.u & SIGN) >> 52;
+		exp = (val.u & EXP) >> 52;
+		frac = (val.u & FRAC);
+
+		// Add implied leading one for normalized fractions.
+		if (exp) {
+			frac = frac | ONE;
+		}
+
+		// Shift the fraction by the first 2 bits of the exponent field.
+		// Use remaining 9 bits for the index into sums/avgs.
+		shift = exp & SHIFT;
+		ind = (exp & IND) >> 2;
+		frac <<= shift;
+
+		// the 13 least significant nibbles (half bytes) are where the fraction bytes will be.
+		// Add each nibble's value to the appropriate cell.
+		int64_t nib = 0xF;
+		int64_t x;
+		for (int j = 0; j <= 13; j++){
+			x = ((frac & nib) >> (j * 4));
+			x *= (sign ? -1 : 1);
+
+			recursive_add(sums, ind + j, x);
+
+			nib <<= 4;
+		}
+	}
+}
+
+// Divide all sums to get avgs, condense all avg into a single average.
+double compute_avg(int64_t *sums, int64_t *avgs, int n){
+    int64_t  remainder, x, a;
+	union Data64 val;
+
+	bool sign;
+	double avg_total;
 
     // boolean that indicates all elements in sum are zeros
-    bool zero = true;
     while(true){
-        for (int i = 0; i < SUMS_LEN; i++){
-            avgs[i] += sums[i] / n;
+        for (int i = 0; i < NUM_SIZES; i++){
+            recursive_add(avgs, i, sums[i]/n);
             sums[i] = sums[i] % n;
         }
-        // shift sums down into next bucket
-        for (int i = SUMS_LEN; i > 0; i++){
-            sums[i-1] += sums[i] << 4;
-            // check that all but the zeroth element are non zero
+        // shift any non-zero sums down into next bucket,
+        //if that would not cause an overflow. Else leave sum for next pass.
+	    bool zero = true;
+        for (int i = NUM_SIZES - 1; i > 0; i--){
+        	if(sums[i] == 0){
+		        continue;
+        	}
+
+	        a = sums[i-1];
+	        x = sums[i] << 4;
+
+        	if (!(sums[i] & (0xFll << 60))
+        	&&	!((x > 0) && (a > INT52_MAX - x))
+	        &&  !((x < 0) && (a < INT52_MIN - x))) {
+		        sums[i-1] += sums[i] << 4;
+		        sums[i] = 0;
+	        }
+
+            // check that all but the zeroth element are non zero on each pass.
             if (zero && sums[i] != 0){
                 zero = false;
             }
         }
         if(zero){
-            avgs[0] += sums[0] / n;
+	        recursive_add(avgs, 0, sums[0]/n);
             remainder = sums[0] % n;
             break;
         }
     }
 
+    // Handle remainder and the denormalized size class separately.
+    sign = remainder & SIGN;
+	val.i = llabs(remainder);
+    avg_total = val.f/n * (sign ? -1 : 1);
 
-    return 0.0;
+	sign = avgs[0] & SIGN;
+	val.i = llabs(avgs[0]);
+	avg_total += val.f * (sign ? -1 : 1);
+
+	// For normalized numbers, the leading one must be created. Shift the number
+	// and adjust the exponent until
+	for (int i = 1; i < NUM_SIZES; i++){
+
+	}
+
+    return avg_total;
 }
 
 double avg_bits(const double *data, int n){
-    int8_t  sums[SUMS_LEN];
+	int64_t  sums[NUM_SIZES], avgs[NUM_SIZES];
 
-    for (int i = 0; i < SUMS_LEN; i++){
-        sums[i] = 0;
-    }
+	for (int i = 0; i < NUM_SIZES; i++){
+		sums[i] = 0;
+		avgs[i] = 0;
+	}
 
-    int64_t exp, shift, ind, frac;
-    bool sign;
+	compute_sums(data, sums, n);
 
-    union Data64 val;
-
-    for (int i = 0; i < n; i++){
-        val.f = data[i];
-
-        // Extract fraction, exponent and sign data from the bit vector.
-        sign = (val.u & SIGN) >> 52;
-        exp = (val.u & EXP) >> 52;
-        frac = (val.u & FRAC);
-
-        // Add implied leading one for normalized fractions.
-        if (exp) {
-            frac = frac | ONE;
-        }
-
-        // Shift the fraction by the first 2 bits of the exponent field.
-        // Use remaining 9 bits for the index into sums/avgs.
-        shift = exp & SHIFT;
-        ind = (exp & IND) >> 2;
-        frac <<= shift;
-
-        // the 13 least significant nibbles (half bytes) are where the fraction bytes will be.
-        // Add each nibble's value to the appropriate cell.
-        int64_t nib = 0xF;
-        int64_t x;
-        for (int j = 0; j <= 13; j++){
-            x = ((frac & nib) >> (j * 4));
-            x *= (sign ? -1 : 1);
-
-	        add2sums(sums, ind + j, x);
-
-            printf("%3lld, ", x);
-            nib <<= 4;
-        }
-
-        printf("\n");
-
-
-        for (int j = ind; j < ind + 16; j++){
-            printf("%3hhd, ", sums[j]);
-        }
-
-	    printf("\n");
-        print64(&val);
-        printf("%llx, %llx, %llx\n", ind, shift, frac);
-    }
-
-    return 0.0;
+	return compute_avg(sums, avgs, n);
 }
 
+void test() {
+	union Data64 a, b, c;
+
+	a.u = INT52_MIN;
+	b.u = INT52_MAX;
+	c.u = 0xFll << 60;
+
+
+	print64(&a);
+	print64(&b);
+	print64(&c);
+
+}
 
 int main(int argc, char *argv[]) {
     int n, num_files = 0;
@@ -304,7 +349,7 @@ int main(int argc, char *argv[]) {
     }
 
     sDir = argv[1];
-    sprintf(sPath, "%s\\*.csv", sDir);
+    sprintf(sPath, "%s\\overflow.csv", sDir);
     if((hFind = FindFirstFile(sPath, &fdFile)) == INVALID_HANDLE_VALUE) {
         printf("Directory path not found: %s\n", sPath);
         return 0;
@@ -366,24 +411,4 @@ int main(int argc, char *argv[]) {
     FindClose(hFind);
 
     return(0);
-}
-
-int test() {
-    union Data64 a, b, c;
-
-    a.u = EXP >> 1  | FRAC;
-    b.u = ONE;
-    c.u = SIGN;
-
-
-    print64(&a);
-    print64(&b);
-    print64(&c);
-
-    int8_t d, e, f;
-    d = 7;
-    e = 0xb;
-    f = d + e;
-
-    printf("%hhx", f);
 }

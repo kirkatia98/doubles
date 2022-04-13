@@ -4,7 +4,7 @@
 Calculating a the average of a list of doubles is seems deceptively simple.
 When working with real numbers, `Avg = sum/num_elem`.
 However because the nature of the IEEE floating point format, is essentially base-2 scientific notation with a limited number of precesion digits, error can accumulate when representing the sum requires more precision digits than those represented by the floating point representation. To get around this I represent the exact sum by adding mantissas for doubles of similar magnitude into one of 512 + 16 buckets grouped by exponent, overflowing if needed. Then I individually average each bucket, and 
-percolate the remainder down until only the smallest bucket holds value. This allows for a error rate of 0 in most* cases.
+percolate the remainder down until only the smallest bucket holds value. This allows for a error rate of 0 in most cases.
 
 # ELI5 Explanation
 Let's use a base-10 anology calculator to explore this problem.
@@ -18,9 +18,8 @@ You now can represent numbers from 0 to 9,999! Pretty good.
 How about representing fractional numbers? Or approximating Irrational numbers? Or any other real number? What about HUGE numbers?
 How do you represent those numbers?
 
-The solution I present next is a simplification of how IEEE decided to represent floating point. (The sign bit, the implied leading 1, or denormalized numbers are not critical to understanding solution to my doubles avg solution).
+*The solution I present next is a simplification of how IEEE decided to represent floating point. (The sign bit, the implied leading 1, or denormalized numbers are not critical to understanding solution to my doubles avg solution).*
 
-<br>
 Say you design your calculator such that for these fractional numbers, the numbers are broken up as such:
 
   `EE DDD`
@@ -49,11 +48,10 @@ What to call your representation? How about... 'Floating point', or 'floats' for
 In a couple years, due to harware advancements, you are able to design and build a NEW calculator, with 10 digits instead of just 5. Having just 2 digits for the exponent field no longer makes sense, so you make a new format, `EEE DDDDDDD`, and call this new format 'Double'. It has more range and more precision!
 
 <br>
-Now back to the original probelem, average of a list of doubles. (For simplicity, let's stick with floats.)
-The naive solution would be to add all the numbers then average them.
+Now back to the original problem, average of a list of doubles. (For simplicity, let's stick with floats). The naive solution would be to add all the numbers then average them.
 
-<br>
-Simple Example:
+### Here's a simple example:
+
 49100(F) = 1.00 <br>
 49200(F) = 2.00 <br>
 49500(F) = 5.00 <br>
@@ -62,8 +60,7 @@ Adding them together, you get: 49800(F) = 8.00
 
 And dividing by 3: 49800(F) = 2.67, which is 2 2/3 or 2.6666.... rounded. No problem here.
 
-<br>
-But suppose you get:
+### But suppose you get:
 
 99100(F) = 1.00 * 10<sup>50</sup> <br>
 49100(F) = 1.00 <br>
@@ -73,8 +70,7 @@ The real value of the sum would be: 1..000000...1 ....0000...1
 
 UH OH. You need 100 digits of precision to even represent this value. Luckily, when you present the final solution, the error is outside the represented precision. 
 
-<br>
-What if you get:
+### What if you get:
 
 49100(F) = 9.00 <br>
 46499(F) = 0.00499 ... 249 times. That's sums to a total of 1.24251
@@ -92,6 +88,11 @@ Let's split the exponent values into groups of 5, for a total of 20 groups. 0-4,
 number of digits.
 
 
+Once you've summed all the values into buckets, it's time to compute the average. Starting with highest exponent bucket, compute the average for bucket, and percolatte the remainder down to the next bucket by multiplying(dilluting) the value. At the end of this process, you'll have 20 integer values that when summed represent the true average, as well as a remainder.
+
+These avg values can be added up together after being scaled with the apporiate exponent, much like digits 4, 5, 2, 3, and 1 were added as 40000, 5000, 200, 30, and 1 in the very first example. By starting from the smallest bucket, and "snowballing" a sum upto the highest bucket, no error is accumulated that would be displayed within the range of precision.
+
+In where the resulting sum is so small as to be comprable in number of elements, an error can still result because error during the division.
 
 
 

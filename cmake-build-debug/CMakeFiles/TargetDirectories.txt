@@ -1,0 +1,3 @@
+C:/Users/Katherine/doubles/cmake-build-debug/CMakeFiles/doubles.dir
+C:/Users/Katherine/doubles/cmake-build-debug/CMakeFiles/edit_cache.dir
+C:/Users/Katherine/doubles/cmake-build-debug/CMakeFiles/rebuild_cache.dir

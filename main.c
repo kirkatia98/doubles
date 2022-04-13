@@ -43,6 +43,7 @@
 
 // Bit Printing Utility Functions.
 union Data64 {
+	uint64_t b:7;
     uint64_t u;
     int64_t i;
     double f;
@@ -399,7 +400,7 @@ int main(int argc, char *argv[]) {
         if((file_err = fopen_s(&fp, sPath, "r")) != 0){
             strerror_s(errbuff,255 + 1, file_err);
             fprintf(stderr, "cannot open file '%s': %s\n", filename, errbuff);
-            //return 0;
+            return 0;
         }
 
         fscanf_s(fp, "n: %d\n", &n);
@@ -407,7 +408,7 @@ int main(int argc, char *argv[]) {
         fscanf_s(fp, "\n");
 
         if(n == 0){
-            //return 0;
+            return 0;
         }
 
         data = malloc(n * sizeof(double));
